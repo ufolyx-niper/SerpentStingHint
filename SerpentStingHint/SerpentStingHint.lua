@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: GPL-2.0-only
 -- Aura clipping after EverAuras, and health-curve projection after Last Breath Forever.
 -- See README and the accompanying licenses for attribution.
+local addon, ns = ...
 local _, class = UnitClass("player")
 if class ~= "HUNTER" then return end
 
@@ -16,14 +17,16 @@ local MIN_TIME = 2
 local MIN_HITS = 3
 local MIN_LOSS = 0.05
 local MAX_IDLE = 5
-local REFRESH_TIME = 10
-local OPENING_HEALTH = 5000
 local OPENING_TIME = 6
 local BAND_COUNT = 40
 local EPSILON = 0.0000001
 
-local root = CreateFrame("Frame", nil, UIParent, LAYOUT_TEMPLATE)
+local anchor = CreateFrame("Frame", nil, UIParent)
+anchor:SetSize(1, 1)
+anchor:SetPoint("CENTER", UIParent, "CENTER", 140, -100)
+local root = CreateFrame("Frame", nil, anchor, LAYOUT_TEMPLATE)
 root:SetSize(ICON_SIZE, ICON_SIZE)
+root:SetPoint("CENTER", anchor)
 root:Hide()
 local sampleGates = {}
 local sampleTime, lastHit, hits
@@ -33,6 +36,7 @@ local elapsedUpdate = 0
 local initialized, unsupported, estimatorReady
 local timerContainer, missingContainer
 local openingHighlight, openingEndsAt, targetMaxHealth
+local neutral
 
 local function IsSecret(value)
     return issecretvalue and issecretvalue(value)
@@ -45,10 +49,14 @@ local function TargetIsAttackable()
         and not IsSecret(dead) and dead == false
 end
 
-local function ApplyPosition()
-    local position = SerpentStingHintPosition
-    root:ClearAllPoints()
-    root:SetPoint("CENTER", UIParent, "CENTER", position.x, position.y)
+local function ApplySettings()
+    local db = ns.db
+    if not InCombatLockdown() then
+        root:SetScale(db.scale / 100)
+        ns.PlaceFrame(anchor, ICON_SIZE)
+    end
+    anchor:SetShown(not ns.previewActive)
+    if neutral then neutral:SetShown(db.showIdle) end
 end
 
 local function NewIcon(parent)
@@ -66,7 +74,7 @@ local function NewAuraContainer()
 end
 
 local function BuildAuraDisplay()
-    local neutral = NewIcon(root)
+    neutral = NewIcon(root)
     neutral:SetDesaturated(true)
     neutral:SetVertexColor(0.55, 0.55, 0.55)
 
@@ -187,15 +195,16 @@ local function OpeningThreshold(now)
         local fighting = UnitAffectingCombat("target")
         if not IsSecret(fighting) and fighting == true then openingEndsAt = now + OPENING_TIME end
     end
-    if openingEndsAt and now >= openingEndsAt then return nil end
+    if not ns.db.openingEnabled or (openingEndsAt and now >= openingEndsAt) then return nil end
 
     local ok, maximum = pcall(UnitHealthMax, "target")
     if ok and not IsSecret(maximum) and type(maximum) == "number" then
         targetMaxHealth = maximum
     end
-    if targetMaxHealth and targetMaxHealth >= OPENING_HEALTH then
+    local openingHealth = ns.db.openingHealth
+    if targetMaxHealth and targetMaxHealth >= openingHealth then
         -- Put the float boundary between the two adjacent whole HP values.
-        return (OPENING_HEALTH - 0.5) / targetMaxHealth
+        return (openingHealth - 0.5) / targetMaxHealth
     end
 end
 
@@ -220,10 +229,11 @@ local function UpdateEstimate(now)
     end
     openingHighlight:Hide()
 
+    local refreshTime = ns.db.refreshTime
     for _, gate in ipairs(sampleGates) do
         -- Use the top of the sampled health band as the starting share. With a constant
         -- damage rate, time left exceeds 10 s only above this projected health share.
-        local lower = REFRESH_TIME * gate.upper / (REFRESH_TIME + elapsed) + EPSILON
+        local lower = refreshTime * gate.upper / (refreshTime + elapsed) + EPSILON
         local enoughLossBelow = gate.upper - MIN_LOSS
         local openingFrom = openingThreshold and math.max(openingThreshold, enoughLossBelow)
         thresholdCurve:ClearPoints()
@@ -253,12 +263,6 @@ end
 
 local function Initialize()
     if initialized or unsupported or InCombatLockdown() then return end
-    if type(SerpentStingHintPosition) ~= "table"
-        or type(SerpentStingHintPosition.x) ~= "number"
-        or type(SerpentStingHintPosition.y) ~= "number" then
-        SerpentStingHintPosition = { x = 140, y = -100 }
-    end
-    ApplyPosition()
     local ok, missingClip = pcall(function()
         C_AddOns.LoadAddOn("Blizzard_AuraContainer")
         return BuildAuraDisplay()
@@ -272,20 +276,38 @@ local function Initialize()
         estimatorReady = pcall(BuildEstimateDisplay, missingClip)
     end
     initialized = true
+    ApplySettings()
     ResetSample()
     RefreshTarget()
 end
 
 local events = CreateFrame("Frame")
+events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_ENTERING_WORLD")
 events:RegisterEvent("PLAYER_TARGET_CHANGED")
+events:RegisterEvent("PLAYER_REGEN_DISABLED")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
+events:RegisterEvent("DISPLAY_SIZE_CHANGED")
 local registered = pcall(events.RegisterUnitEvent, events, "UNIT_COMBAT", "target")
 if not registered then pcall(events.RegisterEvent, events, "UNIT_COMBAT") end
-events:RegisterUnitEvent("UNIT_MAXHEALTH", "target")
+if not pcall(events.RegisterUnitEvent, events, "UNIT_MAXHEALTH", "target") then
+    pcall(events.RegisterEvent, events, "UNIT_MAXHEALTH")
+end
 events:SetScript("OnEvent", function(_, event, unit, action)
+    if event == "ADDON_LOADED" then
+        if unit == addon then ns.SetupSettings(ICON_SIZE, SPELL_ICON, ApplySettings) end
+        return
+    elseif event == "PLAYER_REGEN_DISABLED" then
+        ns.EndPreview()
+        return
+    elseif event == "DISPLAY_SIZE_CHANGED" then
+        ns.RefreshSettingsLayout()
+        return
+    end
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_REGEN_ENABLED" then
+        ns.SetupSettings(ICON_SIZE, SPELL_ICON, ApplySettings)
         Initialize()
+        ApplySettings()
     end
     if not initialized then return end
 
@@ -331,22 +353,3 @@ events:SetScript("OnUpdate", function(_, elapsed)
     RefreshTarget()
     if not pcall(UpdateEstimate, GetTime()) then ResetSample() end
 end)
-
-SLASH_SERPENTSTINGHINT1 = "/sshint"
-SlashCmdList.SERPENTSTINGHINT = function(message)
-    if not initialized then
-        local status = unsupported and "the aura display is unavailable" or "initialization is pending"
-        print("Serpent Sting Hint: " .. status .. ".")
-        return
-    end
-    local x, y = message:match("^%s*([+-]?%d+)%s+([+-]?%d+)%s*$")
-    if message:match("^%s*reset%s*$") then
-        SerpentStingHintPosition = { x = 140, y = -100 }
-    elseif x and y and math.abs(tonumber(x)) <= 4000 and math.abs(tonumber(y)) <= 4000 then
-        SerpentStingHintPosition = { x = tonumber(x), y = tonumber(y) }
-    else
-        print("Serpent Sting Hint: /sshint <x> <y> or /sshint reset")
-        return
-    end
-    ApplyPosition()
-end
