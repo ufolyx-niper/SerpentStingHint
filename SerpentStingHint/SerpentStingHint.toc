@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: Serpent Sting Hint
+## Notes: Tracks your Serpent Sting on the current target in WoW Forever.
+## Version: 0.1.1
+## SavedVariables: SerpentStingHintPosition
+## AllowLoadGameType: camelot
+
+SerpentStingHint.lua
