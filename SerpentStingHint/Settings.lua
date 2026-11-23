@@ -19,6 +19,7 @@ local labels = {
     skipElementals = "Skip refresh reminders for elementals",
     modes = { "Off", "Countdown", "Gold border", "Gray icon" },
     unlock = "Unlock and drag", lock = "Lock position", reset = "Restore defaults",
+    finish = "Done",
     location = "Position: %d, %d", drag = "Drag to position", sample = "Preview",
     tip = "The opening health rule applies while the kill-time estimate is unavailable.",
     busy = "Preview and dragging are available out of combat.",
@@ -33,6 +34,7 @@ if locale == "zhCN" then
         skipElementals = "跳过元素生物的补钉刺提示",
         modes = { "关闭", "倒计时", "金框", "灰色" },
         unlock = "解锁并拖动", lock = "锁定位置", reset = "恢复默认",
+        finish = "完成",
         location = "位置：%d，%d", drag = "拖动设置位置", sample = "预览",
         tip = "击杀时间尚未算出时，可以按开怪血量提示。",
         busy = "请在脱战时预览或拖动图标。",
@@ -46,6 +48,7 @@ elseif locale == "zhTW" then
         skipElementals = "跳過元素生物的補釘刺提示",
         modes = { "關閉", "倒數計時", "金框", "灰色" },
         unlock = "解鎖並拖曳", lock = "鎖定位置", reset = "恢復預設",
+        finish = "完成",
         location = "位置：%d，%d", drag = "拖曳設定位置", sample = "預覽",
         tip = "擊殺時間尚未算出時，可以按開怪生命值提示。",
         busy = "請在脫戰時預覽或拖曳圖示。",
@@ -58,6 +61,7 @@ local panel, category, preview, previewArt, icon, border, timer, badge
 local scaleSlider, scaleLabel, idleCheck, openingCheck, secondsInput, healthInput
 local elementalCheck
 local previewButton, moveButton, positionLabel
+local previewControls, screenPreviewButton, screenMoveButton
 local mode, unlocked, dragging, syncing = 1, false, false, false
 
 local function ValidValue(key, value, fallback)
@@ -112,8 +116,15 @@ function ns.RefreshSettingsLayout()
     ns.previewActive = mode ~= 1
     apply()
     RefreshPreview()
-    if previewButton then previewButton:SetText(labels.preview:format(labels.modes[mode])) end
-    if moveButton then moveButton:SetText(unlocked and labels.lock or labels.unlock) end
+    local previewLabel = labels.preview:format(labels.modes[mode])
+    local moveLabel = unlocked and labels.lock or labels.unlock
+    if previewButton then previewButton:SetText(previewLabel) end
+    if moveButton then moveButton:SetText(moveLabel) end
+    if previewControls then
+        screenPreviewButton:SetText(previewLabel)
+        screenMoveButton:SetText(moveLabel)
+        previewControls:SetShown(ns.previewActive)
+    end
     if positionLabel then positionLabel:SetText(labels.location:format(ns.db.x, ns.db.y)) end
 end
 
@@ -142,6 +153,30 @@ local function PreviewAvailable()
     if not InCombatLockdown() then return true end
     print(title .. ": " .. labels.busy)
     return false
+end
+
+local function CyclePreview()
+    if not PreviewAvailable() then return end
+    if mode == #labels.modes then
+        ns.EndPreview()
+        return
+    end
+    StopDrag(false)
+    mode = mode + 1
+    ns.RefreshSettingsLayout()
+end
+
+local function ToggleMove(closeSettings)
+    if not PreviewAvailable() then return end
+    StopDrag(true)
+    unlocked = not unlocked
+    if unlocked and mode == 1 then mode = 2 end
+    ns.RefreshSettingsLayout()
+    if unlocked and closeSettings and SettingsPanel and type(SettingsPanel.Close) == "function"
+        and SettingsPanel:IsShown() then
+        -- Use Blizzard's normal close path so any pending game settings keep their confirmation.
+        pcall(SettingsPanel.Close, SettingsPanel, true)
+    end
 end
 
 local function CreatePreview()
@@ -191,6 +226,21 @@ local function Button(parent, text, x, y, width, onClick)
     button:SetText(text)
     button:SetScript("OnClick", onClick)
     return button
+end
+
+local function CreatePreviewControls()
+    local controls = CreateFrame("Frame", nil, UIParent)
+    controls:Hide()
+    controls:SetFrameStrata("FULLSCREEN_DIALOG")
+    controls:SetSize(381, 24)
+    controls:SetPoint("TOP", UIParent, "TOP", 0, -28)
+    screenPreviewButton = Button(controls, "", 0, 0, 155, CyclePreview)
+    screenMoveButton = Button(controls, "", 161, 0, 138, function() ToggleMove(false) end)
+    Button(controls, labels.finish, 305, 0, 76, function()
+        StopDrag(not InCombatLockdown())
+        ns.EndPreview()
+    end)
+    previewControls = controls
 end
 
 local function Checkbox(parent, key, text, y, onChanged)
@@ -284,20 +334,8 @@ local function CreatePanel()
     Text(panel, "GameFontHighlightSmall", labels.tip, 29, -238)
     elementalCheck = Checkbox(panel, "skipElementals", labels.skipElementals, -260)
 
-    previewButton = Button(panel, "", 24, -300, 155, function()
-        if not PreviewAvailable() then return end
-        StopDrag(false)
-        mode = mode % #labels.modes + 1
-        if mode == 1 then unlocked = false end
-        ns.RefreshSettingsLayout()
-    end)
-    moveButton = Button(panel, "", 188, -300, 138, function()
-        if not PreviewAvailable() then return end
-        StopDrag(true)
-        unlocked = not unlocked
-        if unlocked and mode == 1 then mode = 2 end
-        ns.RefreshSettingsLayout()
-    end)
+    previewButton = Button(panel, "", 24, -300, 155, CyclePreview)
+    moveButton = Button(panel, "", 188, -300, 138, function() ToggleMove(true) end)
     Button(panel, labels.reset, 335, -300, 130, function()
         StopDrag(false)
         for key, value in pairs(defaults) do ns.db[key] = value end
@@ -305,7 +343,6 @@ local function CreatePanel()
     end)
     positionLabel = Text(panel, "GameFontHighlight", "", 29, -343)
     panel:SetScript("OnShow", SyncPanel)
-    panel:SetScript("OnHide", ns.EndPreview)
     local entry = Settings.RegisterCanvasLayoutCategory(panel, title)
     Settings.RegisterAddOnCategory(entry)
     category = entry
@@ -322,6 +359,7 @@ function ns.SetupSettings(iconSize, iconTexture, applySettings)
     if Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory then
         pcall(function()
             CreatePreview()
+            CreatePreviewControls()
             CreatePanel()
         end)
     end
