@@ -5,6 +5,7 @@ if select(2, UnitClass("player")) ~= "HUNTER" then return end
 local defaults = {
     x = 140, y = -100, scale = 100, showIdle = true,
     refreshTime = 10, openingEnabled = true, openingHealth = 5000,
+    skipElementals = false,
 }
 local ranges = {
     x = { -4000, 4000 }, y = { -4000, 4000 }, scale = { 50, 200 },
@@ -15,6 +16,7 @@ local labels = {
     scale = "Icon and timer size", idle = "Show the gray icon when there is no reminder",
     refreshTime = "Minimum estimated time left (seconds)", openingHealth = "Opening minimum health (HP)",
     openingEnabled = "Use the opening health rule", preview = "Preview: %s",
+    skipElementals = "Skip refresh reminders for elementals",
     modes = { "Off", "Countdown", "Gold border", "Gray icon" },
     unlock = "Unlock and drag", lock = "Lock position", reset = "Restore defaults",
     location = "Position: %d, %d", drag = "Drag to position", sample = "Preview",
@@ -28,6 +30,7 @@ if locale == "zhCN" then
         scale = "图标和倒计时大小", idle = "没有提醒时显示灰色图标",
         refreshTime = "预计剩余击杀时间门槛（秒）", openingHealth = "开怪剩余血量门槛（点）",
         openingEnabled = "启用开怪血量规则", preview = "预览：%s",
+        skipElementals = "跳过元素生物的补钉刺提示",
         modes = { "关闭", "倒计时", "金框", "灰色" },
         unlock = "解锁并拖动", lock = "锁定位置", reset = "恢复默认",
         location = "位置：%d，%d", drag = "拖动设置位置", sample = "预览",
@@ -40,6 +43,7 @@ elseif locale == "zhTW" then
         scale = "圖示和倒數計時大小", idle = "沒有提醒時顯示灰色圖示",
         refreshTime = "預計剩餘擊殺時間門檻（秒）", openingHealth = "開怪剩餘生命值門檻（點）",
         openingEnabled = "啟用開怪生命值規則", preview = "預覽：%s",
+        skipElementals = "跳過元素生物的補釘刺提示",
         modes = { "關閉", "倒數計時", "金框", "灰色" },
         unlock = "解鎖並拖曳", lock = "鎖定位置", reset = "恢復預設",
         location = "位置：%d，%d", drag = "拖曳設定位置", sample = "預覽",
@@ -52,6 +56,7 @@ end
 local size, texturePath, apply
 local panel, category, preview, previewArt, icon, border, timer, badge
 local scaleSlider, scaleLabel, idleCheck, openingCheck, secondsInput, healthInput
+local elementalCheck
 local previewButton, moveButton, positionLabel
 local mode, unlocked, dragging, syncing = 1, false, false, false
 
@@ -236,6 +241,7 @@ local function SyncPanel()
     scaleLabel:SetText(db.scale .. "%")
     idleCheck:SetChecked(db.showIdle)
     openingCheck:SetChecked(db.openingEnabled)
+    elementalCheck:SetChecked(db.skipElementals)
     healthInput:SetEnabled(db.openingEnabled)
     secondsInput:SetText(tostring(db.refreshTime))
     healthInput:SetText(tostring(db.openingHealth))
@@ -276,27 +282,28 @@ local function CreatePanel()
     end)
     healthInput = NumberInput(panel, "openingHealth", labels.openingHealth, -204)
     Text(panel, "GameFontHighlightSmall", labels.tip, 29, -238)
+    elementalCheck = Checkbox(panel, "skipElementals", labels.skipElementals, -260)
 
-    previewButton = Button(panel, "", 24, -277, 155, function()
+    previewButton = Button(panel, "", 24, -300, 155, function()
         if not PreviewAvailable() then return end
         StopDrag(false)
         mode = mode % #labels.modes + 1
         if mode == 1 then unlocked = false end
         ns.RefreshSettingsLayout()
     end)
-    moveButton = Button(panel, "", 188, -277, 138, function()
+    moveButton = Button(panel, "", 188, -300, 138, function()
         if not PreviewAvailable() then return end
         StopDrag(true)
         unlocked = not unlocked
         if unlocked and mode == 1 then mode = 2 end
         ns.RefreshSettingsLayout()
     end)
-    Button(panel, labels.reset, 335, -277, 130, function()
+    Button(panel, labels.reset, 335, -300, 130, function()
         StopDrag(false)
         for key, value in pairs(defaults) do ns.db[key] = value end
         SyncPanel()
     end)
-    positionLabel = Text(panel, "GameFontHighlight", "", 29, -320)
+    positionLabel = Text(panel, "GameFontHighlight", "", 29, -343)
     panel:SetScript("OnShow", SyncPanel)
     panel:SetScript("OnHide", ns.EndPreview)
     local entry = Settings.RegisterCanvasLayoutCategory(panel, title)

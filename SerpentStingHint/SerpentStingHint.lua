@@ -12,6 +12,7 @@ local STING_RANKS = {
     [13553] = true, [13554] = true, [13555] = true, [25295] = true,
 }
 local FILTER = "HARMFUL|PLAYER"
+local ELEMENTAL_TYPE = 4
 local LAYOUT_TEMPLATE = "DisableUntrustedLayoutScriptsTemplate"
 local MIN_TIME = 2
 local MIN_HITS = 3
@@ -35,6 +36,7 @@ local thresholdCurve, transparent, opaque
 local elapsedUpdate = 0
 local initialized, unsupported, estimatorReady
 local timerContainer, missingContainer
+local missingClip, targetCreatureType
 local openingHighlight, openingEndsAt, targetMaxHealth
 local neutral
 
@@ -49,6 +51,17 @@ local function TargetIsAttackable()
         and not IsSecret(dead) and dead == false
 end
 
+local function RefreshReminders()
+    if not missingClip or not root:IsShown() then return end
+    if ns.db.skipElementals and type(UnitCreatureType) == "function" then
+        local ok, _, creatureType = pcall(UnitCreatureType, "target")
+        if ok and not IsSecret(creatureType) and type(creatureType) == "number" then
+            targetCreatureType = creatureType
+        end
+    end
+    missingClip:SetShown(not (ns.db.skipElementals and targetCreatureType == ELEMENTAL_TYPE))
+end
+
 local function ApplySettings()
     local db = ns.db
     if not InCombatLockdown() then
@@ -57,6 +70,7 @@ local function ApplySettings()
     end
     anchor:SetShown(not ns.previewActive)
     if neutral then neutral:SetShown(db.showIdle) end
+    RefreshReminders()
 end
 
 local function NewIcon(parent)
@@ -259,11 +273,12 @@ end
 local function RefreshTarget()
     root:SetShown(TargetIsAttackable())
     if not root:IsShown() then ResetSample() end
+    RefreshReminders()
 end
 
 local function Initialize()
     if initialized or unsupported or InCombatLockdown() then return end
-    local ok, missingClip = pcall(function()
+    local ok, clip = pcall(function()
         C_AddOns.LoadAddOn("Blizzard_AuraContainer")
         return BuildAuraDisplay()
     end)
@@ -272,6 +287,7 @@ local function Initialize()
         print("Serpent Sting Hint: this client could not initialize the aura display.")
         return
     end
+    missingClip = clip
     if type(UnitHealthPercent) == "function" then
         estimatorReady = pcall(BuildEstimateDisplay, missingClip)
     end
@@ -303,6 +319,9 @@ events:SetScript("OnEvent", function(_, event, unit, action)
     elseif event == "DISPLAY_SIZE_CHANGED" then
         ns.RefreshSettingsLayout()
         return
+    end
+    if event == "PLAYER_TARGET_CHANGED" or event == "PLAYER_ENTERING_WORLD" then
+        targetCreatureType = nil
     end
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_REGEN_ENABLED" then
         ns.SetupSettings(ICON_SIZE, SPELL_ICON, ApplySettings)
